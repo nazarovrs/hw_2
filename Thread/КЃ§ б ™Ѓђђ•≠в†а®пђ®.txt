@@ -1,0 +1,114 @@
+											/*Предисловие*/
+/*В нашей программе студенты могут решать свои билеты одновременно, но преподаватель не может проверить у всех одновременно*/
+/*Преподавтель может проверять у студента работу, пока другие решают. Если все студенты быстро успели решить,
+то им придётся стоять в очереди, всё таки преподаватель у нас один :)*/
+
+#include <iostream>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <random>
+std::mutex mtx;
+enum Skill { BAD, OK, NORMAL, GOOD }; //Перечисления для того, чтобы выставлять оценки
+const int COUNT_OF_STUDENTS = 5; //Количество студентов на экзамене, можно поменяьт
+std::random_device rd; //Для рандома
+std::uniform_int_distribution<> dist(0, 3); //Для рандома
+std::mt19937 gen(rd()); //Для рандома
+
+struct Student { // структура студент
+	int id = 0; //Номер студента
+	bool isReady = false; //готов ли отвечать, будет служить в качестве сигнала к серверному потоку, что можно проверять экз
+	Skill skill = OK; //Навыки студента
+	void Prepare() {
+		mtx.lock(); //Mutex, все консольные выводы будут горлышком в нашей проге, чтобы выводилось корректно
+		std::cout << "\n" << id << " студент начал подготовку.";
+		mtx.unlock(); 
+		int temp = dist(gen); //Рандомим скилл студента от 0 до 3
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000 + temp*1500)); //Псевдорандомим время, которое студент будет тратить
+		switch (temp) { //Выберем его скилл в зависимости от рандома
+		case 0: 
+			skill = BAD;
+			break;
+		case 1:
+			skill = OK;
+			break;
+		case 2:
+			skill = NORMAL;
+			break;
+		case 3:
+			skill = GOOD;
+			break;
+		}
+		mtx.lock();
+		std::cout << "\nНу, я готов. (Студент номер " << id << " тянет руку) ";
+		mtx.unlock();
+		isReady = true;
+	}
+};
+
+struct Teacher { //Учитель
+	void check(Student student) { //Чекает работу студента
+		mtx.lock();
+		std::cout << "\nСтудент " << student.id <<" отвечает... ";
+		mtx.unlock();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000)); //Будем считать, что профессор слушает за 1 сек (1000мс)
+		mtx.lock();
+		switch (student.skill) //В зависимости от скилла студента ставим оценку
+		{
+			case BAD:
+				if ((std::rand() % 4) >= 1) //Если повезёт и препод в настроении, то натянет студенту троечку вместо неуда
+					std::cout << "\nНатянем троечку... Следующий!";
+				else
+					std::cout << "\nНеуд, следующий!";
+				break;
+			case OK:
+				std::cout << "\n\"Удовлетворительно\", следующий!";
+				break;
+			case NORMAL:
+				std::cout << "\nВаша оценка \"Хорошо\", следующий!";
+				break;
+			case GOOD:
+				std::cout << "\nОтлично, следующий!";
+				break;
+		default:
+			std::cout << "\nСовсем не по теме. Однозначно пересдача, следующий!";
+			break;
+		}
+		mtx.unlock();
+	}
+};
+
+void PrepareStudent(Student* students, int i) { //Функция-обёртка для подготовки студента. Сделал, чтобы было удобнее в поток обернуть
+	students[i].Prepare();
+}
+
+void StartExam(Student* students, int n) { //Начало экзамена
+	std::thread* threads = new std::thread[n]; //Создаём столько потоков, сколько студентов, время решения студента не зависит от времени решения другого студента
+	for (int i = 0; i < n; i++) {
+		students[i].id = i; //присваиваем номер студенту, чисто чтобы в выводе потом было удобнее ориентироваться
+		threads[i] = std::thread(PrepareStudent, students, i); //Отправляем его за парту готовиться, а сами идём дальше
+	}
+	
+}
+
+int main() { 
+	setlocale(LC_ALL, "russian"); //Пусть в консоли будут русские символы нормально оотбражаться
+	Student* students = new Student[COUNT_OF_STUDENTS](); //Выделяем памяти на COUNT_OF_STUDENTS пришедших на экзамен студентов
+	Teacher* teach = new Teacher(); //Делаем одного препадавателя 
+	std::thread preparing(StartExam, std::ref(students), COUNT_OF_STUDENTS); //Запускаем всех в класс готовить ответ к билету
+	int count = 0; //Счётчик для вычисления того, сколько людей уже ответило свой билет
+	while (1) { //Ждём, пока есть хоть один, кто пишет экзамен, будем ждать от него реакции!
+		for (int i = 0; i < COUNT_OF_STUDENTS; i++) { //Отлавливаем не пришёл ли от кого запрос на проверочку
+			if (students[i].isReady == true) { //Если i-тый студент готов показывать, то
+				teach->check(students[i]);//Профессор принимает у него работу и выставляет оценку
+				students[i].isReady = false; //Ставим готовность студента на ложь
+				count++; //Добавляем + 1 к счётчику прошедших (или не прошедших :)) через экзамен
+			}
+		}
+		if (count == COUNT_OF_STUDENTS) //Если все студенты сдали
+			break; //То отпускаем уставшего профессора пить кофе 
+	}
+	preparing.join(); //В данном случае нам ненужно ждать, пока все студенты подготовятся, т.к. препод до последнего сидит
+	// Но всё же лучше пусть будет
+	
+}
